@@ -21,49 +21,39 @@ fn main() {
     }
     // println!("ENV: {:?}", res.());
     let mut cron = CronJob::new("Test Cron", run);
-    cron.minutes("*/20");
+    cron.seconds("*/20");
     cron.start_job();
 }
 
 fn run(_: &str) {
-    let res = make_request();
-    if let Ok((res, diff)) = res {
-        print_response_to_file(res, diff);
-    }
-}
-
-fn make_request() -> Result<(Response, Duration), Error> {
-    // Get the url and secret key from the environment
-    let url = env::var("URL").expect("URL must be set");
-    let secret_key = env::var("SECRET").expect("Secret key must be set");
-
-    let start_time = chrono::Local::now();
-    let client = blocking::Client::new();
-    let res = client.get(url).header("secret-key", secret_key).send()?;
-    let end_time = chrono::Local::now();
-    let diff = end_time - start_time;
-    Ok((res, diff))
-}
-
-fn print_response_to_file(res: Response, diff: Duration) {
+    let (res, diff) = time_request().expect("Error happened when making request");
     if !significant_vary(diff) {
         return;
     }
+    print_response_to_file(res, diff);
+}
 
+fn time_request() -> Result<(Response, Duration), Error> {
+    let start_time = chrono::Local::now();
+    let res = send_request()?;
+    let diff = chrono::Local::now() - start_time;
+    Ok((res, diff))
+}
+
+fn send_request() -> Result<Response, Error> {
+    let url = env::var("URL").expect("URL must be set");
+    let secret_key = env::var("SECRET").expect("Secret key must be set");
+    let client = blocking::Client::new();
+    client.get(url).header("secret-key", secret_key).send()
+}
+
+fn print_response_to_file(res: Response, diff: Duration) {
     let status = res.status();
     let body = res
         .json::<HashMap<String, String>>()
         .expect("Unable to parse json");
 
-    let time = body.get("time").unwrap();
-    let date_time = chrono::Local::now();
-    let date_time = date_time.format("%Y-%m-%d %H:%M");
-    let res_time = diff.num_milliseconds();
-
-    let string = format!(
-        "[{}]: Status: {}, Time: {}, Response Time: {}ms\n______________________________\n",
-        date_time, status, time, res_time
-    );
+    let string = get_string_format(status, body);
 
     let path = env::var("FILE_LOCATION").expect("File location must be set");
     let mut file = File::options()
@@ -74,6 +64,17 @@ fn print_response_to_file(res: Response, diff: Duration) {
 
     file.write_all(string.as_bytes())
         .expect("Unable to write data");
+}
+
+fn get_string_format(status: reqwest::StatusCode, body: HashMap<String, String>) -> String {
+    let time = body.get("time").expect("Time not found when parsing json");
+    let date_time = chrono::Local::now().format("%Y-%m-%d %H:%M");
+    let res_time = diff.num_milliseconds();
+
+    let string = format!(
+        "[{}]: Status: {}, Time: {}, Response Time: {}ms\n______________________________\n",
+        date_time, status, time, res_time
+    );
 }
 
 fn significant_vary(diff: Duration) -> bool {
