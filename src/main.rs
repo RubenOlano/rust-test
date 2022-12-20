@@ -1,6 +1,6 @@
 use chrono::Duration;
 use cronjob::CronJob;
-use dotenv::dotenv;
+use dotenv::from_filename;
 use reqwest::{
     blocking::{self, Response},
     Error,
@@ -14,7 +14,12 @@ thread_local! {
 }
 
 fn main() {
-    dotenv().ok();
+    let res = from_filename(".env");
+    match res {
+        Ok(a) => println!("Loaded .env file {}", a.to_string_lossy()),
+        Err(e) => panic!("No .env file found {} wtf", e.to_string()),
+    }
+    // println!("ENV: {:?}", res.());
     let mut cron = CronJob::new("Test Cron", run);
     cron.minutes("*/20");
     cron.start_job();
