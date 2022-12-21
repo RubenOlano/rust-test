@@ -1,3 +1,5 @@
+pub mod times;
+
 use cronjob::CronJob;
 use dotenv::from_filename;
 use reqwest::{
@@ -10,9 +12,7 @@ type Res = (Response, i64);
 type Body = HashMap<String, String>;
 
 thread_local! {
-    // create a vector to store the different times
-    // Don't print to file if time varies by less that 0.5 seconds
-    static TIMES: std::cell::RefCell<Vec<f64>> = std::cell::RefCell::new(Vec::new());
+   static TIMES: times::Times = times::Times::new();
 }
 
 fn main() {
@@ -22,7 +22,7 @@ fn main() {
         Err(e) => panic!("No .env file found {}", e.to_string()),
     }
     let mut cron = CronJob::new("Test Cron", run);
-    cron.minutes("*/20");
+    cron.seconds("*/20");
     cron.start_job();
 }
 
@@ -50,14 +50,9 @@ fn send_request() -> Result<Response, Error> {
 }
 
 fn print_response_to_file(res: Response, diff: i64) {
-    let status = res.status();
-    let body = res
-        .json::<HashMap<String, String>>()
-        .expect("Unable to parse json");
-
-    let string = get_string_format(status, body, diff);
-
+    let string = get_string_format(res, diff);
     let path = env::var("FILE_LOCATION").expect("File location must be set");
+
     let mut file = File::options()
         .append(true)
         .create(true)
@@ -68,7 +63,10 @@ fn print_response_to_file(res: Response, diff: i64) {
         .expect("Unable to write data");
 }
 
-fn get_string_format(status: reqwest::StatusCode, body: Body, diff: i64) -> String {
+fn get_string_format(res: Response, diff: i64) -> String {
+    let status = res.status();
+    let body = res.json::<Body>().expect("Unable to parse json");
+
     let time = body.get("time").expect("Time not found when parsing json");
     let date_time = chrono::Local::now().format("%Y-%m-%d %H:%M");
 
@@ -80,39 +78,16 @@ fn get_string_format(status: reqwest::StatusCode, body: Body, diff: i64) -> Stri
 
 fn significant_vary(diff: i64) -> bool {
     let diff = diff as f64;
-    let len = TIMES.with(|t| t.borrow().len());
+    let len = TIMES.with(|t| t.len());
     if len <= 3 {
-        TIMES.with(|t| t.borrow_mut().push(diff));
+        TIMES.with(|t| t.add_time(diff));
         return true;
     }
-    let avg = average_time();
+    let avg = TIMES.with(|t| t.avg_time());
     if (diff - avg).abs() > 500.0 {
         return true;
     }
-    remove_large_times();
-    TIMES.with(|t| {
-        let mut times = t.borrow_mut();
-        times.push(diff);
-    });
+    TIMES.with(|t| t.remove_larger_times());
+    TIMES.with(|t| t.add_time(diff));
     false
-}
-
-fn average_time() -> f64 {
-    let avg = TIMES.with(|t| {
-        let times = t.borrow();
-        let sum: f64 = times.iter().sum();
-        sum / times.len() as f64
-    });
-    avg
-}
-
-fn remove_large_times() {
-    TIMES.with(|t| {
-        let mut times = t.borrow_mut();
-        let max = times.iter().max_by(|a, b| a.partial_cmp(b).unwrap());
-        if let Some(max) = max {
-            let index = times.iter().position(|x| x == max).unwrap();
-            times.remove(index);
-        }
-    });
 }
