@@ -1,12 +1,12 @@
 use cronjob::CronJob;
-use dotenv::dotenv;
+use dotenv::from_filename;
 use reqwest::{
     blocking::{self, Response},
     Error,
 };
 use std::{collections::HashMap, env, fs::File, io::Write};
 
-type Res = Result<(Response, i64), Error>;
+type Res = (Response, i64);
 type Body = HashMap<String, String>;
 
 thread_local! {
@@ -16,14 +16,18 @@ thread_local! {
 }
 
 fn main() {
-    dotenv().ok();
+    let res = from_filename(".env");
+    match res {
+        Ok(a) => println!("Loaded .env file {}", a.to_string_lossy()),
+        Err(e) => panic!("No .env file found {}", e.to_string()),
+    }
     let mut cron = CronJob::new("Test Cron", run);
-    cron.seconds("*/20");
+    cron.minutes("*/20");
     cron.start_job();
 }
 
 fn run(_: &str) {
-    let (res, diff) = time_request().expect("Error happened when making request");
+    let (res, diff) = time_request().expect("Unable to send request");
     if !significant_vary(diff) {
         return;
     }
@@ -34,7 +38,8 @@ fn time_request() -> Result<Res, Error> {
     let start_time = chrono::Local::now();
     let res = send_request()?;
     let diff = chrono::Local::now() - start_time;
-    Ok(Res(res, diff.num_milliseconds()))
+    let diff = diff.num_milliseconds();
+    Ok((res, diff))
 }
 
 fn send_request() -> Result<Response, Error> {
