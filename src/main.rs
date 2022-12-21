@@ -1,4 +1,3 @@
-use chrono::Duration;
 use cronjob::CronJob;
 use dotenv::dotenv;
 use reqwest::{
@@ -6,6 +5,9 @@ use reqwest::{
     Error,
 };
 use std::{collections::HashMap, env, fs::File, io::Write};
+
+type Res = Result<(Response, i64), Error>;
+type Body = HashMap<String, String>;
 
 thread_local! {
     // create a vector to store the different times
@@ -28,11 +30,11 @@ fn run(_: &str) {
     print_response_to_file(res, diff);
 }
 
-fn time_request() -> Result<(Response, Duration), Error> {
+fn time_request() -> Result<Res, Error> {
     let start_time = chrono::Local::now();
     let res = send_request()?;
     let diff = chrono::Local::now() - start_time;
-    Ok((res, diff))
+    Ok(Res(res, diff.num_milliseconds()))
 }
 
 fn send_request() -> Result<Response, Error> {
@@ -42,13 +44,13 @@ fn send_request() -> Result<Response, Error> {
     client.get(url).header("secret-key", secret_key).send()
 }
 
-fn print_response_to_file(res: Response, diff: Duration) {
+fn print_response_to_file(res: Response, diff: i64) {
     let status = res.status();
     let body = res
         .json::<HashMap<String, String>>()
         .expect("Unable to parse json");
 
-    let string = get_string_format(status, body);
+    let string = get_string_format(status, body, diff);
 
     let path = env::var("FILE_LOCATION").expect("File location must be set");
     let mut file = File::options()
@@ -61,19 +63,18 @@ fn print_response_to_file(res: Response, diff: Duration) {
         .expect("Unable to write data");
 }
 
-fn get_string_format(status: reqwest::StatusCode, body: HashMap<String, String>) -> String {
+fn get_string_format(status: reqwest::StatusCode, body: Body, diff: i64) -> String {
     let time = body.get("time").expect("Time not found when parsing json");
     let date_time = chrono::Local::now().format("%Y-%m-%d %H:%M");
-    let res_time = diff.num_milliseconds();
 
-    let string = format!(
+    format!(
         "[{}]: Status: {}, Time: {}, Response Time: {}ms\n______________________________\n",
-        date_time, status, time, res_time
-    );
+        date_time, status, time, diff
+    )
 }
 
-fn significant_vary(diff: Duration) -> bool {
-    let diff = diff.num_milliseconds() as f64;
+fn significant_vary(diff: i64) -> bool {
+    let diff = diff as f64;
     let len = TIMES.with(|t| t.borrow().len());
     if len <= 3 {
         TIMES.with(|t| t.borrow_mut().push(diff));
