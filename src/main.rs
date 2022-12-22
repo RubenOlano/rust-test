@@ -7,12 +7,13 @@ use reqwest::{
     Error,
 };
 use std::{collections::HashMap, env, fs::File, io::Write};
+use times::Times;
 
 type Res = (Response, i64);
 type Body = HashMap<String, String>;
 
 thread_local! {
-   static TIMES: times::Times = times::Times::new();
+   static TIMES: Times = Times::new();
 }
 
 fn main() {
@@ -77,14 +78,13 @@ fn get_string_format(res: Response, diff: i64) -> String {
 }
 
 fn significant_vary(diff: i64) -> bool {
-    let diff = diff as f64;
     let len = TIMES.with(|t| t.len());
     if len <= 3 {
         TIMES.with(|t| t.add_time(diff));
         return true;
     }
     let avg = TIMES.with(|t| t.avg_time());
-    if (diff - avg).abs() > 500.0 {
+    if (diff as f64 - avg).abs() > 500.0 {
         return true;
     }
     TIMES.with(|t| t.remove_larger_times());

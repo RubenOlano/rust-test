@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 
 pub struct Times {
-    times: RefCell<Vec<f64>>,
+    times: RefCell<Vec<i64>>,
 }
 
 impl Times {
@@ -14,19 +14,21 @@ impl Times {
         }
     }
 
-    pub fn add_time(&self, time: f64) {
+    pub fn add_time(&self, time: i64) {
         self.times.borrow_mut().push(time);
     }
 
     pub fn avg_time(&self) -> f64 {
         let times = self.times.borrow();
-        let sum: f64 = times.iter().sum();
-        sum / times.len() as f64
+        let sum: i64 = times.iter().sum();
+        sum as f64 / times.len() as f64
     }
 
     pub fn remove_larger_times(&self) {
         let avg = self.avg_time();
-        self.times.borrow_mut().retain(|e| (*e - avg).abs() < 500.0);
+        self.times
+            .borrow_mut()
+            .retain(|e| (*e as f64 - avg).abs() < 500.0);
     }
 
     pub fn len(&self) -> usize {
