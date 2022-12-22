@@ -12,6 +12,15 @@ use times::Times;
 type Res = (Response, i64);
 type Body = HashMap<String, String>;
 
+#[derive(Debug)]
+enum PingError {
+    RequestError(Error),
+    VarError(env::VarError, String),
+    FileError(std::io::Error),
+    ParseError(Error),
+    BodyError(String),
+}
+
 thread_local! {
    static TIMES: Times = Times::new();
 }
@@ -28,53 +37,109 @@ fn main() {
 }
 
 fn run(_: &str) {
-    let (res, diff) = time_request().expect("Unable to send request");
+    let req_status = time_request();
+
+    let (res, diff) = match req_status {
+        Ok(a) => a,
+        Err(e) => {
+            println!("Error: {:#?}", e);
+            return;
+        }
+    };
+
     if !significant_vary(diff) {
         return;
     }
-    print_response_to_file(res, diff);
+    match print_response_to_file(res, diff) {
+        Ok(_) => (),
+        Err(e) => println!("Error: {:#?}", e),
+    }
 }
 
-fn time_request() -> Result<Res, Error> {
+fn time_request() -> Result<Res, PingError> {
     let start_time = chrono::Local::now();
     let res = send_request()?;
+
     let diff = chrono::Local::now() - start_time;
     let diff = diff.num_milliseconds();
     Ok((res, diff))
 }
 
-fn send_request() -> Result<Response, Error> {
-    let url = env::var("URL").expect("URL must be set");
-    let secret_key = env::var("SECRET").expect("Secret key must be set");
+fn send_request() -> Result<Response, PingError> {
+    let url = env::var("URL");
+
+    let url = match url {
+        Ok(a) => a,
+        Err(e) => return Err(PingError::VarError(e, "URL not found".to_string())),
+    };
+
+    let secret_key = env::var("SECRET");
+
+    let secret_key = match secret_key {
+        Ok(a) => a,
+        Err(e) => return Err(PingError::VarError(e, "SECRET not found".to_string())),
+    };
+
     let client = blocking::Client::new();
-    client.get(url).header("secret-key", secret_key).send()
+    let res = client.get(url).header("secret-key", secret_key).send();
+
+    match res {
+        Ok(a) => return Ok(a),
+        Err(e) => return Err(PingError::RequestError(e)),
+    };
 }
 
-fn print_response_to_file(res: Response, diff: i64) {
-    let string = get_string_format(res, diff);
-    let path = env::var("FILE_LOCATION").expect("File location must be set");
+fn print_response_to_file(res: Response, diff: i64) -> Result<(), PingError> {
+    let string = get_string_format(res, diff)?;
+    let path = env::var("FILE_LOCATION");
 
-    let mut file = File::options()
-        .append(true)
-        .create(true)
-        .open(path)
-        .expect("Unable to create file");
+    let path = match path {
+        Ok(a) => a,
+        Err(e) => {
+            return Err(PingError::VarError(
+                e,
+                "FILE_LOCATION not found".to_string(),
+            ))
+        }
+    };
 
-    file.write_all(string.as_bytes())
-        .expect("Unable to write data");
+    let file = File::options().create(true).append(true).open(path);
+    let mut file = match file {
+        Ok(a) => a,
+        Err(e) => return Err(PingError::FileError(e)),
+    };
+
+    let file_err = file.write_all(string.as_bytes());
+    match file_err {
+        Ok(_) => (),
+        Err(e) => return Err(PingError::FileError(e)),
+    }
+    Ok(())
 }
 
-fn get_string_format(res: Response, diff: i64) -> String {
+fn get_string_format(res: Response, diff: i64) -> Result<String, PingError> {
     let status = res.status();
-    let body = res.json::<Body>().expect("Unable to parse json");
+    let body = res.json::<Body>();
 
-    let time = body.get("time").expect("Time not found when parsing json");
+    let body = match body {
+        Ok(a) => a,
+        Err(e) => return Err(PingError::ParseError(e)),
+    };
+
+    let time = body.get("time");
+
+    let time = match time {
+        Some(a) => a,
+        None => return Err(PingError::BodyError("time not found".to_string())),
+    };
+
     let date_time = chrono::Local::now().format("%Y-%m-%d %H:%M");
 
-    format!(
+    let formatted = format!(
         "[{}]: Status: {}, Time: {}, Response Time: {}ms\n______________________________\n",
         date_time, status, time, diff
-    )
+    );
+    Ok(formatted)
 }
 
 fn significant_vary(diff: i64) -> bool {
